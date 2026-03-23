@@ -1,8 +1,8 @@
 """
 Funtions used to evaluate a lexicon learning algorithm. Called as main script, it evaluates the input segmentation file.
 
-Author: Benjamin van Niekerk, Simon Malan
-Contact: benjamin.l.van.niekerk@gmail.com, 24227013@sun.ac.za
+Author: Simon Malan, Benjamin van Niekerk, Danel Slabbert
+Contact: 24227013@sun.ac.za, benjamin.l.van.niekerk@gmail.com, 24051055@sun.ac.za
 Date: October 2025
 """
 
@@ -21,8 +21,6 @@ import statistics
 import editdistance
 from sklearn import metrics
 from sklearn.metrics.cluster import contingency_matrix
-
-USED_MODAL_TYPES = []
 
 @dataclasses.dataclass(frozen=True)
 class Fragment:
