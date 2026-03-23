@@ -9,7 +9,6 @@ Date: October 2025
 import argparse
 from pathlib import Path
 import itertools
-from tqdm import tqdm
 
 import dataclasses
 from typing import Iterable, List, Tuple
@@ -469,7 +468,7 @@ if __name__ == "__main__":
     gt_word_dict = {}
     total_duration = 0.0
     disc_info = sorted(disc_info, key=lambda x: (x[0].speaker, x[0].interval[0]))   
-    for word_tree, group in itertools.groupby(tqdm(disc_info), key=lambda x: x[0].speaker):
+    for word_tree, group in itertools.groupby(disc_info, key=lambda x: x[0].speaker):
         
         if group_by_words:
             gt_phones = words(grids[word_tree], phone_trees[word_tree], tier=0) # GT phone-level transcription of all words in the utterance
