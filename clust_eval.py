@@ -21,6 +21,7 @@ import statistics
 import editdistance
 from sklearn import metrics
 from sklearn.metrics.cluster import contingency_matrix
+from tqdm import tqdm
 
 @dataclasses.dataclass(frozen=True)
 class Fragment:
@@ -103,7 +104,8 @@ def ned(discovered: Iterable[Tuple[Fragment, Transcription, int]], norm: bool = 
     """
     discovered = sorted(discovered, key=lambda x: x[2])
     
-    max_cluster_size = max((len(list(group)) for _, group in itertools.groupby(discovered, key=lambda x: x[2])), default=0)
+    _, groups = itertools.groupby(discovered, key=lambda x: x[2])
+    max_cluster_size = max(len(list(group)) for group in groups)
     if max_cluster_size > 10_000:
         print(f"Warning: Large cluster size detected ({max_cluster_size} elements). This may lead to high memory usage. Using accumulators for memory efficiency.")
         total_dist = 0.0
@@ -112,7 +114,7 @@ def ned(discovered: Iterable[Tuple[Fragment, Transcription, int]], norm: bool = 
         weighted_dist_sum = 0.0
         total_weight_sum = 0.0
 
-        for _, group in itertools.groupby(discovered, key=lambda x: x[2]):
+        for group in tqdm(groups, total=len(set(c[2] for c in discovered)), desc="Calculating NED"):
             cluster_tokens = [c[1].tokens for c in group]
             
             for d, l in distance(cluster_tokens, norm=norm):
@@ -131,7 +133,6 @@ def ned(discovered: Iterable[Tuple[Fragment, Transcription, int]], norm: bool = 
             norm_per_num_pairwise = (weighted_dist_sum / total_weight_sum) if total_weight_sum > 0 else 0.0
             return final_ned, norm_per_num_pairwise
         else:
-            # Fixed: Returning None instead of the undefined '_'
             return final_ned, None
 
     distances = [
@@ -606,7 +607,8 @@ if __name__ == "__main__":
         print_result("Nmr. GT phonetic realizations", len(gt_word_dict))
         print_result("Nmr. singleton GT phonetic realizations", sum(1 for v in gt_word_dict.values() if isinstance(v, list) and len(v) == 1))
         print_result("Nmr. discovered segments mapped to GT phonetic realizations", sum(len(v) for v in gt_word_dict.values()))
-    print("\n")
+        print("\n")
+
     word_transcriptions, disc_tokens, disc_clusters = [], [], []
     for frag, transc, clust in disc_info:
         word_transcriptions.append(
