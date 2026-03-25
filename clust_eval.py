@@ -71,6 +71,36 @@ def reverse_ned(gt_word_dict, norm: bool = False) -> float:
         Normalized per # elements in class (each class' weight is proportional to its # elements)
         Pop singleton classes
     """
+    max_cluster_size = max(len(list(group)) for group in gt_word_dict.values())
+    if max_cluster_size > 1_000:
+        print(f"Warning: Large type cluster detected ({max_cluster_size} elements). This may lead to high memory usage. Using accumulators for memory efficiency.")
+        total_dist = 0.0
+        total_count = 0
+        
+        weighted_dist_sum = 0.0
+        total_weight_sum = 0.0
+
+        for clusters in tqdm(gt_word_dict, total=len(gt_word_dict), desc="Calculating reverse NED"):
+            cluster_tokens = [tuple(item[1]) for item in gt_word_dict[clusters]]
+            
+            for d, l in distance(cluster_tokens, norm=norm):
+                if not np.isnan(d):
+                    total_dist += d
+                    total_count += 1
+                    
+                    if norm:
+                        val = d if l > 1 else 0.0
+                        weighted_dist_sum += val * l
+                        total_weight_sum += l
+
+        final_ned = total_dist / total_count if total_count > 0 else 0.0
+        
+        if norm:
+            norm_per_num_pairwise = (weighted_dist_sum / total_weight_sum) if total_weight_sum > 0 else 0.0
+            return final_ned, norm_per_num_pairwise
+        else:
+            return final_ned, None
+        
     distances = [
         (d, l)
         for clusters in gt_word_dict
@@ -103,10 +133,8 @@ def ned(discovered: Iterable[Tuple[Fragment, Transcription, int]], norm: bool = 
         Credit singleton clusters
     """
     discovered = sorted(discovered, key=lambda x: x[2])
-    
-    _, groups = itertools.groupby(discovered, key=lambda x: x[2])
-    max_cluster_size = max(len(list(group)) for group in groups)
-    if max_cluster_size > 10_000:
+    max_cluster_size = max(len(list(group)) for _, group in itertools.groupby(discovered, key=lambda x: x[2]))
+    if max_cluster_size > 1_000:
         print(f"Warning: Large cluster size detected ({max_cluster_size} elements). This may lead to high memory usage. Using accumulators for memory efficiency.")
         total_dist = 0.0
         total_count = 0
@@ -114,7 +142,7 @@ def ned(discovered: Iterable[Tuple[Fragment, Transcription, int]], norm: bool = 
         weighted_dist_sum = 0.0
         total_weight_sum = 0.0
 
-        for group in tqdm(groups, total=len(set(c[2] for c in discovered)), desc="Calculating NED"):
+        for _, group in tqdm(itertools.groupby(discovered, key=lambda x: x[2]), total=len(set(c[2] for c in discovered)), desc="Calculating NED"):
             cluster_tokens = [c[1].tokens for c in group]
             
             for d, l in distance(cluster_tokens, norm=norm):
@@ -438,11 +466,6 @@ if __name__ == "__main__":
         default=".list",
         type=str,
     )
-    parser.add_argument(
-        "--print_clean", 
-        action="store_true", 
-        help="print the evaluation results in a clean format for easy parsing."
-    )
     args = parser.parse_args()
 
     # Segment-type (words or syllables)
@@ -473,7 +496,7 @@ if __name__ == "__main__":
                 if len(parts) == 3: 
                     speaker, start_time, end_time = parts[0], parts[1], parts[2]
                     speaker_parts = speaker.split("_")
-                    if len(speaker_parts) > 3:
+                    if len(speaker_parts) > 2:
                         speaker = "_".join(speaker_parts[:-2]) 
                     if cluster is not None:
                         fragments.append((speaker, Interval(float(start_time), float(end_time)), int(cluster)))
@@ -542,14 +565,10 @@ if __name__ == "__main__":
         indices_to_drop = set(pop_list)
         disc_info = [v for i, v in enumerate(disc_info) if i not in indices_to_drop]
     
+    print(f"\n~~~ Evaluation results for {args.disc_path.stem} ~~~")
+    print_result("Number of discovered units:", count_words_NS)
+    print_result("Number of discovered clusters:", len(cluster_set))
 
-    if args.print_clean:
-        print(f"\n~~~ Evaluation results for {args.disc_path.stem} ~~~")
-        print_result("Number of discovered units:", count_words_NS)
-        print_result("Number of discovered clusters:", len(cluster_set))
-    else:
-        print(f"\nNumber of clusters: {len(cluster_set):,}") 
-        print(f"Number of discovered units: {count_words_NS:,}\n")
 
     # For reverse NED and PER
     gt_word_dict = {}
@@ -599,15 +618,10 @@ if __name__ == "__main__":
                     gt_word_dict[word_dict_key] = []
                 gt_word_dict[word_dict_key].append((word_tree, clusters, gt_phone.intervals))
 
-    if not args.print_clean:
-        print("Number of ground-truth phonetic realizations of words:", len(gt_word_dict))
-        print("Number of singleton ground-truth phonetic realizations of words:", sum(1 for v in gt_word_dict.values() if isinstance(v, list) and len(v) == 1))
-        print("Number of discovered segments mapped to ground truth phonetic realizations of words:", sum(len(v) for v in gt_word_dict.values()), "\n")
-    else:
-        print_result("Nmr. GT phonetic realizations", len(gt_word_dict))
-        print_result("Nmr. singleton GT phonetic realizations", sum(1 for v in gt_word_dict.values() if isinstance(v, list) and len(v) == 1))
-        print_result("Nmr. discovered segments mapped to GT phonetic realizations", sum(len(v) for v in gt_word_dict.values()))
-        print("\n")
+    print("\n~~~ Ground-truth phonetic realizations statistics ~~~")
+    print_result("Nmr. GT phonetic realizations", len(gt_word_dict))
+    print_result("Nmr. singleton GT phonetic realizations", sum(1 for v in gt_word_dict.values() if isinstance(v, list) and len(v) == 1))
+    print_result("Nmr. discovered segments mapped to GT phonetic realizations", sum(len(v) for v in gt_word_dict.values()))
 
     word_transcriptions, disc_tokens, disc_clusters = [], [], []
     for frag, transc, clust in disc_info:
@@ -629,96 +643,74 @@ if __name__ == "__main__":
     gold_transcriptions = [word for words in gold_words.values() for word in words] # (tuple of phones contained within gold word boundaries)
 
     # Phonemic-sequence-based metrics
-    print("~~~ Phonemic-sequence-based metrics ~~~")
+    print("\n~~~ Phonemic-sequence-based metrics ~~~")
 
     ned_value, _ = ned(disc_info)
+    print_result("NED", ned_value)
     reverse_ned_value, _ = reverse_ned(gt_word_dict)
-    f1_ned = f1_score(ned_value, reverse_ned_value)
+    print_result("Reverse NED", reverse_ned_value)
+    # f1_ned = f1_score(ned_value, reverse_ned_value)
+    # print_result("F1 NED", f1_ned)
     ned_value_norm, ned_value_weighted_norm = ned(disc_info, norm=True)
+    print_result("Per-cluster Norm NED", ned_value_norm)
+    print_result("Per-cluster Weighted Norm NED", ned_value_weighted_norm)
     reverse_ned_value_norm, reverse_ned_value_weighted_norm = reverse_ned(gt_word_dict, norm=True)
-    f1_ned_norm = f1_score(ned_value_norm, reverse_ned_value_norm)
-    if not args.print_clean:
-        print("NED, Reverse NED, F1 NED:", ned_value, reverse_ned_value, f1_score(ned_value, reverse_ned_value))
-        print("NED-Acc, Reverse NED-Acc, F1 NED-Acc:", 1-ned_value, 1-reverse_ned_value, f1_score(1-ned_value, 1-reverse_ned_value))
-        print("Normalized: NED, Reverse NED, F1 NED:", ned_value_norm, reverse_ned_value_norm, f1_score(ned_value_norm, reverse_ned_value_norm))
-        print("Normalized # elem: NED, Reverse NED, F1 NED:", 
-            ned_value_weighted_norm, reverse_ned_value_weighted_norm, f1_score(ned_value_weighted_norm, reverse_ned_value_weighted_norm)
-        )
-    else:
-        print_result("NED", ned_value)
-        print_result("Reverse NED", reverse_ned_value)
-        print_result("F1 NED", f1_ned)
-        print(f"\n")
-        print_result("Normalised NED", ned_value_norm)
-        print_result("Normalised Reverse NED", reverse_ned_value_norm)
-        print_result("Normalised F1 NED", f1_ned_norm)
-        print(f"\n")
+    print_result("Per-cluster Norm Reverse NED", reverse_ned_value_norm)
+    print_result("Per-cluster Weighted Norm Reverse NED", reverse_ned_value_weighted_norm)
+    # f1_ned_norm = f1_score(ned_value_norm, reverse_ned_value_norm)
+    # print_result("F1 Per-cluster Norm NED", f1_ned_norm)
+    # f1_ned_weighted_norm = f1_score(ned_value_weighted_norm, reverse_ned_value_weighted_norm)
+    # print_result("F1 Per-cluster Weighted Norm NED", f1_ned_weighted_norm)
 
     per_value = per(disc_info)
+    # print_result("PER", per_value)
     reverse_per_value = reverse_per(gt_word_dict)
-    f1_per = f1_score(per_value, reverse_per_value)
+    # print_result("Reverse PER", reverse_per_value)
+    # f1_per = f1_score(per_value, reverse_per_value)
+    # print_result("F1 PER", f1_per)    
 
-    if not args.print_clean:
-        print("\nPER, Reverse PER, F1 PER:", per_value, reverse_per_value, f1_score(per_value, reverse_per_value))
-        print("PAcc, Reverse PAcc, F1 PAcc:", 1-per_value, 1-reverse_per_value, f1_score(1-per_value, 1-reverse_per_value))
+    print_result("PAcc", 1 - per_value)
+    print_result("Reverse PAcc", 1 - reverse_per_value)
+    # f1_pacc = f1_score(1 - per_value, 1 - reverse_per_value)
+    # print_result("F1 PAcc", f1_pacc)
 
-        print("\nCoverage", coverage(gold_transcriptions, disc_info))
-        print("Types", types(gold_transcriptions, disc_info))
-        print("Bitrate", bitrate(disc_clusters, count_words_NS, total_duration))
-    else:
-        print_result("PER", per_value)
-        print_result("Reverse PER", reverse_per_value)
-        print_result("F1 PER", f1_per)
-        print(f"\n")
-        print_result("PAcc", 1-per_value)
-        print_result("Reverse PAcc", 1-reverse_per_value)
-        print_result("F1 PAcc", f1_score(1-per_value, 1-reverse_per_value))
-        print_result("Bitrate", bitrate(disc_clusters, count_words_NS, total_duration), not_percentage=True)
-        print("\n")
-
-    # Contingency matrix
     C_words = contingency_matrix(all_words, disc_clusters)
     C_phones = contingency_matrix(disc_tokens, disc_clusters)
-    if not args.print_clean:
-        # Word-level metrics
-        print("\n~~~ Word-level metrics ~~~")
-        word_level_purity, word_level_cluster_purity = purity(C_words)
-        print("(Per cluster) Purity, Reverse (per word) Purity, F1 Purity", (
-            word_level_purity, word_level_cluster_purity, f1_score(word_level_purity, word_level_cluster_purity)
-        ))
-        print("Homogeneity, Completeness, V-measure", metrics.homogeneity_completeness_v_measure(all_words, disc_clusters))
-        word_level_mi, word_level_nmi, word_level_wnmi, word_level_cnmi = mutial_information(C_words)
-        print("Mutual Information, Normalized MI, Word-normalized MI, Cluster-normalized MI", (
-            word_level_mi, word_level_nmi, word_level_wnmi, word_level_cnmi
-        ))
 
-        # Phone-level realization metrics
-        print("\n~~~ Phone-level word realization metrics ~~~")
-        phone_level_purity, phone_level_cluster_purity = purity(C_phones)
-        print("(Per cluster) Purity, Reverse (per phone-level word realization) Purity, F1 Purity", (
-            phone_level_purity, phone_level_cluster_purity, f1_score(phone_level_purity, phone_level_cluster_purity)
-        ))
-        print("Homogeneity, Completeness, V-measure", metrics.homogeneity_completeness_v_measure(disc_tokens, disc_clusters))
-        phone_level_mi, phone_level_nmi, phone_level_wnmi, phone_level_cnmi = mutial_information(C_phones)
-        print("Mutual Information, Normalized MI, Phone-realization-word-normalized MI, Cluster-normalized MI", (
-            phone_level_mi, phone_level_nmi, phone_level_wnmi, phone_level_cnmi
-        ))
+    # print("\n~~~ Word-level metrics ~~~")
+    # word_level_purity, word_level_cluster_purity = purity(C_words)
+    # print_result("(Per cluster) Purity", word_level_purity)
+    # print_result("Reverse (per word-level phonetic realization) Purity", word_level_cluster_purity)
+    # print_result("Homogeneity", homogeneity_completeness(disc_tokens, C_words, measure="homogeneity"))
+    # print_result("Completeness", homogeneity_completeness(disc_tokens, C_words, measure="completeness"))
+    # print_result("V-measure", metrics.v_measure_score(disc_tokens, disc_clusters))
 
-        # Cluster sizes and distribution
-        print("\n~~~ Cluster size statistics ~~~")
-        cluster_sizes = np.sum(C_words, axis=0)
-        print("Mean, Median, Std, Max, Min:", 
-            np.mean(cluster_sizes), np.median(cluster_sizes), np.std(cluster_sizes), np.max(cluster_sizes), np.min(cluster_sizes)
-        )
-        print("Number of singletons:", len(np.where(cluster_sizes == 1)[0]))
-    else:
-        cluster_sizes = np.sum(C_words, axis=0)
-        singletons_nmr = len(np.where(cluster_sizes == 1)[0])
-        prop_singletons = singletons_nmr / len(cluster_sizes) if len(cluster_sizes) > 0 else 0.0
-        print_result("Mean cluster size", int(np.mean(cluster_sizes)))
-        print_result("Median cluster size", int(np.median(cluster_sizes)))
-        print_result("Std cluster size", int(np.std(cluster_sizes)))
-        print_result("Max cluster size", int(np.max(cluster_sizes)))
-        print_result("Min cluster size", int(np.min(cluster_sizes)))
-        print_result("Number of singletons", singletons_nmr)
-        print_result("Proportion of singletons", prop_singletons)
+    # word_level_mi, word_level_nmi, word_level_wnmi, word_level_cnmi = mutial_information(C_words)
+    # print_result("Mutual Information", word_level_mi)
+    # print_result("Normalized MI", word_level_nmi)
+    # print_result("Word-realization-word-normalized MI", word_level_wnmi)
+    # print_result("Cluster-normalized MI", word_level_cnmi)  
+
+    # print("\n~~~ Phone-level word realization metrics ~~~")
+    # phone_level_purity, phone_level_cluster_purity = purity(C_phones)
+    # print_result("(Per cluster) Purity", phone_level_purity)
+    # print_result("Reverse (per phone-level phonetic realization) Purity", phone_level_cluster_purity)   
+    # print_result("Homogeneity", homogeneity_completeness(disc_tokens, C_phones, measure="homogeneity"))
+    # print_result("Completeness", homogeneity_completeness(disc_tokens, C_phones, measure="completeness"))
+    # print_result("V-measure", metrics.v_measure_score(disc_tokens, disc_clusters))
+    # phone_level_mi, phone_level_nmi, phone_level_wnmi, phone_level_cnmi = mutial_information(C_phones)
+    # print_result("Mutual Information", phone_level_mi)
+    # print_result("Normalized MI", phone_level_nmi)
+    # print_result("Word-realization-word-normalized MI", phone_level_wnmi)
+    # print_result("Cluster-normalized MI", phone_level_cnmi)
+
+    # Cluster sizes and distribution
+    print("\n~~~ Cluster size statistics ~~~")
+    cluster_sizes = np.sum(C_words, axis=0)
+    print_result("Bitrate", bitrate(disc_clusters, len(disc_clusters), total_duration), not_percentage=True)
+    print_result("Mean cluster size", int(np.mean(cluster_sizes)))
+    print_result("Median cluster size", int(np.median(cluster_sizes)))
+    print_result("Max cluster size", int(np.max(cluster_sizes)))
+    print_result("Min cluster size", int(np.min(cluster_sizes)))
+    print_result("Std cluster size", int(np.std(cluster_sizes)))
+    print_result("Number of singletons", len(np.where(cluster_sizes == 1)[0]))

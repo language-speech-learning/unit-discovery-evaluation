@@ -33,11 +33,10 @@ This script evaluates clustering metrics namely: NED (normalized, reverse and ac
 
 **Example Usage**
 
-    python3 clust_eval.py path/to/alignment/files path/to/output --group_by=words --alignment_format=.TextGrid --disc_format=.list --print_clean
+    python3 clust_eval.py path/to/alignment/files path/to/output --group_by=words --alignment_format=.TextGrid --disc_format=.list
 
 with the same argument definitions as above.
 The `group_by` argument specifies the level of transcriptions used for reverse metrics (options: `words` or `syllables`).
-The `print_clean` argument controls the format in which the resulting evaluation is printed to the console.
 
 The input file format can either be a `.list` file containing boundaries and a space-separated class assignment value with each new pair of values on a new line similar to above or a single `.txt` file as used in ZeroSpeech evaluation [https://zerospeech.com/challenge_archive/2017/tasks/], where `--disc_format` specifies this.
 
