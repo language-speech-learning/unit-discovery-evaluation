@@ -46,20 +46,27 @@ class Transcription:
         return Interval(self.intervals[0].begin, self.intervals[-1].end)
 
 
-def distance(group: Iterable[Tuple[str]], norm: bool = False) -> float:
+def distance(group: Iterable[Tuple[str]], total_dist, total_count) -> float:
     num_elements = len(group)
     if num_elements == 1: # pop singleton classes for reverse metric
-        return [(np.nan, num_elements)]
+        return (0.0, num_elements), total_dist, total_count
+
+    group_dist = 0.0
+    group_count = 0
+    for p, q in itertools.combinations(group, 2):
+        max_len = max(len(p), len(q))
+        dist = editdistance.eval(p, q) / max_len if max_len > 0 else 1.0
+        
+        group_dist += dist
+        group_count += 1
     
-    edit_dist = [editdistance.eval(p, q)/max(len(p), len(q))
-                 if max(len(p), len(q)) > 0 else 1
-                 for p, q in itertools.combinations(group, 2)]
-    
-    if norm: return [(statistics.mean(edit_dist), num_elements)] # Average per cluster
-    return [(edit_dist_, num_elements) for edit_dist_ in edit_dist]
+    total_dist += group_dist
+    total_count += group_count
+
+    return (group_dist/group_count, num_elements), total_dist, total_count
 
 
-def reverse_ned(gt_word_dict, norm: bool = False) -> float:
+def reverse_ned(gt_word_dict) -> float:
     """
     (Original) R-NED:
         Not normalized (each class' weight is proportional to its # pairwise comparisons)
@@ -71,56 +78,23 @@ def reverse_ned(gt_word_dict, norm: bool = False) -> float:
         Normalized per # elements in class (each class' weight is proportional to its # elements)
         Pop singleton classes
     """
-    max_cluster_size = max(len(list(group)) for group in gt_word_dict.values())
-    if max_cluster_size > 1_000:
-        print(f"Warning: Large type cluster detected ({max_cluster_size} elements). This may lead to high memory usage. Using accumulators for memory efficiency.")
-        total_dist = 0.0
-        total_count = 0
-        
-        weighted_dist_sum = 0.0
-        total_weight_sum = 0.0
 
-        for clusters in tqdm(gt_word_dict, total=len(gt_word_dict), desc="Calculating reverse NED"):
-            cluster_tokens = [tuple(item[1]) for item in gt_word_dict[clusters]]
-            
-            for d, l in distance(cluster_tokens, norm=norm):
-                if not np.isnan(d):
-                    total_dist += d
-                    total_count += 1
-                    
-                    if norm:
-                        val = d if l > 1 else 0.0
-                        weighted_dist_sum += val * l
-                        total_weight_sum += l
+    tot_dist = 0.0
+    tot_count = 0
+    per_cluster_mean, weights, weighted_dist = [], [], []
+    for clusters in gt_word_dict:
+        (group_mean, group_size), tot_dist, tot_count = distance([tuple(item[1]) for item in gt_word_dict[clusters]],
+                                                                total_dist=tot_dist, 
+                                                                total_count=tot_count)
+        if group_size > 1:
+            weights.append(group_size)
+            weighted_dist.append(group_mean)
+            per_cluster_mean.append(group_mean)
+    
+    # Original R-NED, Per cluster weighted R-NED, Per # elements weighted R-NED
+    return tot_dist/tot_count, np.mean(per_cluster_mean), np.average(weighted_dist, weights=weights)
 
-        final_ned = total_dist / total_count if total_count > 0 else 0.0
-        
-        if norm:
-            norm_per_num_pairwise = (weighted_dist_sum / total_weight_sum) if total_weight_sum > 0 else 0.0
-            return final_ned, norm_per_num_pairwise
-        else:
-            return final_ned, None
-        
-    distances = [
-        (d, l)
-        for clusters in gt_word_dict
-        for d, l in distance([tuple(item[1]) for item in gt_word_dict[clusters]], norm=norm)
-    ]
-
-    if norm: # weighted mean: sum over classes
-        weights = [l for _, l in distances if l != 1] # pop singleton classes
-        distances = [d for d, l in distances if l != 1] # pop singleton classe
-        norm_per_num_pairwise = np.average(distances, weights=weights)
-    else:
-        distances = [d for d, l in distances if l != 1] # pop singleton classes
-
-    if norm:
-        return np.nanmean(distances) if len(distances) > 0 else 0.0, norm_per_num_pairwise 
-    else:
-        return np.nanmean(distances) if len(distances) > 0 else 0.0, _
-
-
-def ned(discovered: Iterable[Tuple[Fragment, Transcription, int]], norm: bool = False) -> float:
+def ned(discovered: Iterable[Tuple[Fragment, Transcription, int]]) -> float:
     """
     Original NED:
         Not normalized (each cluster's weight is proportional to its # pairwise comparisons)
@@ -133,52 +107,21 @@ def ned(discovered: Iterable[Tuple[Fragment, Transcription, int]], norm: bool = 
         Credit singleton clusters
     """
     discovered = sorted(discovered, key=lambda x: x[2])
-    max_cluster_size = max(len(list(group)) for _, group in itertools.groupby(discovered, key=lambda x: x[2]))
-    if max_cluster_size > 1_000:
-        print(f"Warning: Large cluster size detected ({max_cluster_size} elements). This may lead to high memory usage. Using accumulators for memory efficiency.")
-        total_dist = 0.0
-        total_count = 0
+
+    tot_dist = 0.0
+    tot_count = 0
+    per_cluster_mean, weights, weighted_dist = [], [], []
+    for _, group in itertools.groupby(discovered, key=lambda x: x[2]):
+        (group_mean, group_size), tot_dist, tot_count = distance([c[1].tokens for c in group], 
+                                                                total_dist=tot_dist, 
+                                                                total_count=tot_count)
         
-        weighted_dist_sum = 0.0
-        total_weight_sum = 0.0
+        weights.append(group_size)
+        weighted_dist.append(group_mean)
+        if group_size > 1: per_cluster_mean.append(group_mean)
 
-        for _, group in tqdm(itertools.groupby(discovered, key=lambda x: x[2]), total=len(set(c[2] for c in discovered)), desc="Calculating NED"):
-            cluster_tokens = [c[1].tokens for c in group]
-            
-            for d, l in distance(cluster_tokens, norm=norm):
-                if not np.isnan(d):
-                    total_dist += d
-                    total_count += 1
-                    
-                    if norm:
-                        val = d if l > 1 else 0.0
-                        weighted_dist_sum += val * l
-                        total_weight_sum += l
-
-        final_ned = total_dist / total_count if total_count > 0 else 0.0
-        
-        if norm:
-            norm_per_num_pairwise = (weighted_dist_sum / total_weight_sum) if total_weight_sum > 0 else 0.0
-            return final_ned, norm_per_num_pairwise
-        else:
-            return final_ned, None
-
-    distances = [
-        (d, l)
-        for _, group in itertools.groupby(discovered, key=lambda x: x[2])
-        for d, l in distance([c[1].tokens for c in group], norm=norm)
-    ]
-
-    if norm: # weighted mean: sum over clusters
-        weights = [l for _, l in distances]
-        distances_ = [d if l > 1 else 0.0 for d, l in distances]
-        norm_per_num_pairwise = np.average(distances_, weights=weights)
-
-    distances = [d for d, _ in distances]
-    if norm:
-        return np.nanmean(distances) if len(distances) > 0 else 0.0, norm_per_num_pairwise # Per-cluster Norm NED, Per-cluster # elements Norm NED
-    else:
-        return np.nanmean(distances) if len(distances) > 0 else 0.0, None # Original NED, None
+    # Original NED, Per cluster weighted NED, Per # elements weighted NED
+    return tot_dist/tot_count, np.mean(per_cluster_mean), np.average(weighted_dist, weights=weights)
 
 
 def phone_edit_distance(group: Iterable[Tuple[str]], reverse: bool = False) -> float:
@@ -434,6 +377,12 @@ def print_result(label, value, not_percentage=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=".")
     parser.add_argument(
+        "disc_path",
+        metavar="disc-path",
+        help="path to the discovered fragments.",
+        type=Path,
+    )
+    parser.add_argument(
         "gold_dir",
         metavar="gold-dir",
         help="path to the directory of alignments.",
@@ -445,12 +394,6 @@ if __name__ == "__main__":
         help="what level of transcription to use for reverse metrics.",
         default="words",
         type=str,
-    )
-    parser.add_argument(
-        "disc_path",
-        metavar="disc-path",
-        help="path to the discovered fragments.",
-        type=Path,
     )
     parser.add_argument(
         "--alignment_format",
@@ -645,22 +588,20 @@ if __name__ == "__main__":
     # Phonemic-sequence-based metrics
     print("\n~~~ Phonemic-sequence-based metrics ~~~")
 
-    ned_value, _ = ned(disc_info)
+    ned_value, ned_value_norm, ned_value_weighted_norm = ned(disc_info)
+    reverse_ned_value, reverse_ned_value_norm, reverse_ned_value_weighted_norm = reverse_ned(gt_word_dict)
     print_result("NED", ned_value)
-    reverse_ned_value, _ = reverse_ned(gt_word_dict)
     print_result("Reverse NED", reverse_ned_value)
     # f1_ned = f1_score(ned_value, reverse_ned_value)
     # print_result("F1 NED", f1_ned)
-    ned_value_norm, ned_value_weighted_norm = ned(disc_info, norm=True)
     print_result("Per-cluster Norm NED", ned_value_norm)
-    print_result("Per-cluster Weighted Norm NED", ned_value_weighted_norm)
-    reverse_ned_value_norm, reverse_ned_value_weighted_norm = reverse_ned(gt_word_dict, norm=True)
+    print_result("Weighted NED", ned_value_weighted_norm)
     print_result("Per-cluster Norm Reverse NED", reverse_ned_value_norm)
-    print_result("Per-cluster Weighted Norm Reverse NED", reverse_ned_value_weighted_norm)
+    print_result("Weighted Reverse NED", reverse_ned_value_weighted_norm)
     # f1_ned_norm = f1_score(ned_value_norm, reverse_ned_value_norm)
     # print_result("F1 Per-cluster Norm NED", f1_ned_norm)
     # f1_ned_weighted_norm = f1_score(ned_value_weighted_norm, reverse_ned_value_weighted_norm)
-    # print_result("F1 Per-cluster Weighted Norm NED", f1_ned_weighted_norm)
+    # print_result("F1 Weighted NED", f1_ned_weighted_norm)
 
     per_value = per(disc_info)
     # print_result("PER", per_value)
