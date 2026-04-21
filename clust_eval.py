@@ -546,8 +546,8 @@ if __name__ == "__main__":
                     if (disc_start < gt_seq_end) and \
                     (disc_end > gt_seq_begin) and \
                     (gt_phone_interval in interval_set):
-                        if not clusters or clusters[-1] != cluster:
-                            clusters.append(cluster)
+                        # if not clusters or clusters[-1] != cluster:
+                        clusters.append(cluster)
                     
                     if disc_end <= gt_phone_interval.end and temp_idx == disc_idx: # skip this disc interval in the next loop
                         disc_idx += 1
