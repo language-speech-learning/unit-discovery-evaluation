@@ -3,6 +3,7 @@ from typing import Iterable, Tuple
 
 from textgrid import TextGrid, IntervalTier
 from intervaltree import Interval
+import numpy as np
 
 
 class Reader:
@@ -52,6 +53,23 @@ class Reader:
                                 )
                             )
                             start_time = float(end_time)
+
+        elif self.disc_format == ".npy":
+            files = self.disc_root.rglob("**/*" + ".npy")
+            for file in files:
+                segments = np.load(file)
+                speaker = file.stem
+                for start_frame, end_frame, cluster in segments:
+                
+                    start_time = start_frame / 50.0
+                    end_time = end_frame / 50.0
+                    fragments.append(
+                        (
+                            speaker, 
+                            Interval(float(start_time), float(end_time)), 
+                            int(cluster)
+                        )
+                    )
         
         elif self.disc_format == ".txt":
             cluster = None
@@ -75,27 +93,6 @@ class Reader:
                         else:
                             cluster = parts[1]
         
-        elif self.disc_format == ".npy": # TODO
-            cluster = None
-            with open(self.disc_root, "r") as f:
-                for line in f:
-                    parts = line.split()
-                    if len(parts) == 3: 
-                        speaker, start_time, end_time = parts[0], parts[1], parts[2]
-                        speaker_parts = speaker.split("_")
-                        if len(speaker_parts) > 2:
-                            speaker = "_".join(speaker_parts[:-2]) 
-                        if cluster is not None:
-                            fragments.append(
-                                (speaker, 
-                                Interval(float(start_time), float(end_time)), 
-                                int(cluster))
-                            )
-                    elif len(parts) == 2:
-                        if ":" in parts[1]: 
-                            cluster = parts[1].split(":")[0]
-                        else:
-                            cluster = parts[1]
         else:
             raise ValueError("Discovered directory format unsupported.")
         
