@@ -4,8 +4,9 @@ import numpy as np
 
 from utils.utils import *
 
+
 def coverage(
-    gold: Iterable[Transcription],
+    num_gold: int,
     disc: Iterable[Tuple[Fragment, Transcription]],
 ):
     covered = {
@@ -14,13 +15,7 @@ def coverage(
         for interval in transcription.intervals
         if interval.data.lower() not in ["sil","spn","sp",""]
     }
-    total = [
-        interval.data
-        for transcription in gold
-        for interval in transcription.intervals
-        if interval.data.lower() not in ["sil","spn","sp",""]
-    ]
-    return len(covered) / len(total)
+    return len(covered) / num_gold
 
 
 def types(
@@ -32,20 +27,7 @@ def types(
     intersection = gold_types & disc_types
     precision = len(intersection) / len(disc_types)
     recall = len(intersection) / len(gold_types)
-    fscore = 2 * (precision * recall) / (precision + recall)
-    return precision, recall, fscore
-
-
-def tokens(
-    gold: Iterable[Fragment],
-    disc: Iterable[Fragment],
-) -> Tuple[float, float, float]:
-    gold_fragments = set(gold)
-    disc_fragments = set(disc)
-    intersection = gold_fragments & disc_fragments
-    precision = len(intersection) / len(disc_fragments)
-    recall = len(intersection) / len(gold_fragments)
-    fscore = 2 * (precision * recall) / (precision + recall)
+    fscore = f1_score(precision, recall)
     return precision, recall, fscore
 
 
