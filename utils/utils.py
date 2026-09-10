@@ -1,11 +1,14 @@
-from typing import Iterable, List, Tuple
+from typing import List, Tuple, Union
 
 import re
 import itertools
+import numpy as np
 
 import dataclasses
 from textgrid import TextGrid
 from intervaltree import IntervalTree, Interval
+
+import json
 
 
 @dataclasses.dataclass(frozen=True)
@@ -52,11 +55,11 @@ def check_boundary(gold: Interval, disc: Interval) -> bool:
     if gold.contains_interval(disc):
         return True
 
-    gold_duration = round(gold.end - gold.begin, 2)
-    overlap_duration = round(gold.overlap_size(disc), 2)
+    gold_duration = round(gold.end - gold.begin, 3)
+    overlap_duration = round(gold.overlap_size(disc), 3)
     overlap_percentage = overlap_duration / gold_duration
-    duration_condition = gold_duration >= 0.06 and overlap_duration >= 0.03
-    percentage_condition = gold_duration < 0.06 and overlap_percentage >= 0.5
+    duration_condition = gold_duration >= 0.060 and overlap_duration >= 0.030
+    percentage_condition = gold_duration < 0.060 and overlap_percentage >= 0.50
     condition = duration_condition or percentage_condition
     return condition
 
@@ -93,7 +96,10 @@ def transcribe(
         if len(transcription) == 1:
             return Transcription(transcription)
 
-        overlaps = [fragment.interval.overlap_size(interval) for interval in transcription]
+        overlaps = [
+            fragment.interval.overlap_size(interval) 
+            for interval in transcription
+        ]
         assert len(overlaps) > 0
         max_overlap = max(overlaps)
         # if multiple max overlaps, choose the one that is the largest proportion of its own length
@@ -147,7 +153,11 @@ def treeify(grid: TextGrid, tier, sub = r"\d") -> IntervalTree:
     return intv_tree
 
 
-def group_phones_by_tier(grid: TextGrid, tree: IntervalTree, tier: int) -> List[Transcription]:
+def group_phones_by_tier(
+        grid: TextGrid, 
+        tree: IntervalTree, 
+        tier: int
+    ) -> List[Transcription]:
     """Group gold phone-level invervals by the onset and offsets of larger
     gold units specified by ``tier``.
     
@@ -181,7 +191,12 @@ def group_phones_by_tier(grid: TextGrid, tree: IntervalTree, tier: int) -> List[
     return overlaps
 
 
-def get_inverse_transcription(disc_info, grids, phone_trees, gt_unit_tier) -> dict:
+def get_inverse_transcription(
+        disc_info, 
+        grids, 
+        phone_trees, 
+        gt_unit_tier
+    ) -> dict:
     """
     Parameters
     ----------
@@ -221,7 +236,8 @@ def get_inverse_transcription(disc_info, grids, phone_trees, gt_unit_tier) -> di
         for gt_phone in gt_phones:
             clusters = []
             prev_disc_idx_added = -1
-            gt_seq_begin, gt_seq_end = gt_phone.intervals[0].begin, gt_phone.intervals[-1].end
+            gt_seq_begin = gt_phone.intervals[0].begin
+            gt_seq_end = gt_phone.intervals[-1].end
             
             # Per phone in current gold word/syllable
             for gt_phone_interval in gt_phone.intervals:
@@ -230,7 +246,8 @@ def get_inverse_transcription(disc_info, grids, phone_trees, gt_unit_tier) -> di
                 temp_idx = disc_idx
                 while temp_idx < disc_len:
                     disc_phone_seq, cluster, interval_set = disc_transcription[temp_idx]
-                    disc_start, disc_end = disc_phone_seq.intervals[0].begin, disc_phone_seq.intervals[-1].end
+                    disc_start = disc_phone_seq.intervals[0].begin
+                    disc_end = disc_phone_seq.intervals[-1].end
 
                     # Add a cluster to the inverse transcription
                     if (disc_start < gt_seq_end) and \

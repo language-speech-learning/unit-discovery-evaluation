@@ -17,12 +17,12 @@ from sklearn.metrics.cluster import contingency_matrix
 from utils.utils import *
 from utils.data_reader import *
 from utils.metric_schema import *
-from measures.general import *
+from measures.clustering import *
 from measures.lexicon_specific import *
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=".")
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         "disc_root",
         metavar="disc-root",
@@ -71,9 +71,9 @@ if __name__ == "__main__":
 
     # Read gold and discovered files
     rdr = Reader(args.disc_root, args.gold_root, args.disc_format, args.gold_format)
-    grids, duration = rdr.gold_to_grids()
-    fragments = rdr.disc_to_intervals()
-    
+    grids, gold_duration, num_gold_phones = rdr.gold_to_grids()
+    fragments = rdr.disc_to_intervals() # can get duration from here if we must rather do this?
+
     # Build gold interval structure
     phone_trees = {
         speaker: treeify(grid, tier=1, sub=sub) 
@@ -81,30 +81,19 @@ if __name__ == "__main__":
     }
 
     # Build discovered segment structure
+    # Remove segments containing only silence or speaker noise
     disc_info = [
-        (f := Fragment(speaker, interval), transcribe(f, phone_trees[f.speaker]), clust)
+        (f, trans, clust)
         for speaker, interval, clust in fragments
+        if (f := Fragment(speaker, interval)) is not None
+        and (trans := transcribe(f, phone_trees[speaker]))
+        and any(
+            intv.data.lower() not in ["sil", "spn", "sp", ""] 
+            for intv in trans.intervals
+        )
     ]
 
-    # Remove silence, speaker noise, and empty transcriptions from discovered segments
-    count_units_NS = 0
-    pop_list = []
-    for i_trans, (_, transcription, cluster) in enumerate(disc_info):
-        non_silence = False
-        for i_int, interval in enumerate(transcription.intervals):
-            if interval.data.lower() not in ["sil", "spn", "sp", ""]:
-                non_silence = True
-        if non_silence:
-            count_units_NS += 1
-        else: # Remove if all phone tokens are silence or speaker noise or empty
-            pop_list.append(i_trans)
-       
-    if len(pop_list) > 0:
-        print(len(pop_list), "silences/unmapped fragments found!")
-        indices_to_drop = set(pop_list)
-        disc_info = [v for i, v in enumerate(disc_info) if i not in indices_to_drop]
-
-    disc_info = sorted(disc_info, key=lambda x: (x[0].speaker, x[0].interval[0]))   
+    disc_info = sorted(disc_info, key=lambda x: (x[0].speaker, x[0].interval[0]))
     
     # For inverse metrics over gold types
     if args.class_type != "disc":
@@ -121,9 +110,11 @@ if __name__ == "__main__":
             for speaker, grid in grids.items()
         }
 
+    disc_duration = 0
     disc_tokens, disc_clusters = [], []
     for frag, transc, clus in disc_info:
         disc_clusters.append(clus)
+        disc_duration += frag.interval.end - frag.interval.begin
         # Map discovered fragments to class using max overlap rule
         if args.class_type != "disc":
             disc_tokens.append(
@@ -155,7 +146,7 @@ if __name__ == "__main__":
             gt_tokens.append(
                 Fragment(speaker, Interval(interv[0].begin, interv[-1].end))
             )
-    
+
     # General clustering metrics
     calc_iper = False if args.class_type != "disc" else True
     purity_val, inverse_purity_val, inverse_per_val = purity(C, calc_iper)
@@ -164,10 +155,16 @@ if __name__ == "__main__":
     )
     mi, nmi, gold_unit_nmi, cluster_nmi = mutial_information(C)
     type_prec, type_rec, typef1 = types(gt_phone_realizations_of_types, disc_info)
-    tok_prec, tok_rec, tok1 = tokens(gt_tokens, [frag for frag, _, _ in disc_info])
-                
+
     # Lexicon-specific metrics
-    bitrate_val = bitrate(disc_clusters, len(disc_clusters), duration)
+    coverage_val = coverage(num_gold_phones, disc_info)
+    if coverage_val > 0.99:
+        # Use Gold duration for full-coverage systems (to remove the impact of
+        # small differences in transcription lengths)
+        bitrate_val = bitrate(disc_clusters, len(disc_clusters), gold_duration)
+    else:
+        # Use discovered duration for non full-coverage systems
+        bitrate_val = bitrate(disc_clusters, len(disc_clusters), disc_duration)
     ned_val, _, weighted_ned_val = ned(disc_info)
     if args.class_type != "disc":
         inverse_ned_val, _, inverse_weighted_ned_val = inverse_ned(gt_word_dict)
@@ -192,7 +189,6 @@ if __name__ == "__main__":
     else:
         disc_type_counts = Counter(disc_tokens)
         num_classes = len(disc_type_counts)
-        assert len(set(disc_tokens)) == num_classes # TODO remove
         num_single_classes = sum(
             1 for c in disc_type_counts.values()
             if c == 1
@@ -208,17 +204,16 @@ if __name__ == "__main__":
     clust_single = len(np.where(cluster_sizes == 1)[0])
 
     results = EvaluationResults(
-        num_disc_units=count_units_NS,
+        num_disc_units=len(disc_info),
         classes=clss(args.class_type, num_classes, num_single_classes),
         clusters=clust(num_clust, clust_single, clust_mean, clust_std, clust_med, clust_max, clust_min),
-        coverage=coverage(gt_phone_realizations_of_types, disc_info),
+        coverage=coverage_val,
         bitrate=bitrate_val,
         original_nes=fwd_inv_f1(1-ned_val, 1-inverse_ned_val, f1_nes),
         weighted_nes=fwd_inv_f1(1-weighted_ned_val, 1-inverse_weighted_ned_val, f1_wnes),
         pacc=fwd_inv_d(1-per_val, 1-inverse_per_val, d_pacc),
         purity=fwd_inv_f1(purity_val, inverse_purity_val, f1_score(purity_val, inverse_purity_val)),
         types=p_r_f1(type_prec, type_rec, typef1),
-        tokens=p_r_f1(tok_prec, tok_rec, tok1),
         v_measure=v_m(vmeasure_vals[0], vmeasure_vals[1], vmeasure_vals[2]),
         mutual_info=mut_inf(mi, nmi, gold_unit_nmi, cluster_nmi),
     )

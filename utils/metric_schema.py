@@ -80,7 +80,6 @@ class EvaluationResults:
     v_measure: v_m
     mutual_info: mut_inf
     types: p_r_f1
-    tokens: p_r_f1
     boundaries: p_r_f1 | None = None
 
 
