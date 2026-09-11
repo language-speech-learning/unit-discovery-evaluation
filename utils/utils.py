@@ -1,14 +1,12 @@
-from typing import List, Tuple, Union
+from typing import List, Tuple, Dict, Union
 
 import re
 import itertools
 import numpy as np
 
+import textgrids
 import dataclasses
-from textgrid import TextGrid
 from intervaltree import IntervalTree, Interval
-
-import json
 
 
 @dataclasses.dataclass(frozen=True)
@@ -65,19 +63,21 @@ def check_boundary(gold: Interval, disc: Interval) -> bool:
 
 
 def transcribe(
-        fragment: Fragment, tree: IntervalTree, max_overlap: bool = False
-    ) -> Transcription:
+    fragment: Fragment, 
+    tree: IntervalTree, 
+    max_overlap: bool = False
+) -> Transcription:
     """Transcribe a discovered ``fragment`` using a gold ``tree``. Use
     ZeroSpeech overlap rule if ``max_overlap`` is ``False``, otherwise use
     maximum overlap rule.
     
     Parameters
     ----------
-    fragment : Fragment[speaker, inteval]
+    fragment : Fragment[speaker, interval]
         A single discovered fragment.
     tree : IntervalTree
         Containing ``Interval[onset, offset, text]`` for each interval in the 
-        corrosponding ground-truth utterance alignment.
+        corrosponding gold utterance alignment.
     max_overlap : bool
         Substring to Regex remove from interval text.
 
@@ -127,14 +127,15 @@ def transcribe(
     return transcription
 
 
-def treeify(grid: TextGrid, tier, sub = r"\d") -> IntervalTree:
-    """Build an ``InvervalTree`` from a ``TextGrid``.
+def treeify(grid: textgrids.TextGrid, tier, sub = r"\d") -> IntervalTree:
+    """Build an ``InvervalTree`` from a ``textgrids.TextGrid``.
 
     Parameters
     ----------
-    grid : TextGrid
+    grid : textgrids.TextGrid
+        Gold TextGrid for an utterance.
     tier : str
-        ``TextGrid`` tier to extract from.
+        ``textgrids.TextGrid`` tier to extract from.
     sub : str
         Substring to Regex remove from interval text.
 
@@ -146,74 +147,79 @@ def treeify(grid: TextGrid, tier, sub = r"\d") -> IntervalTree:
     """
 
     intervals = [
-        (interval.minTime, interval.maxTime, re.sub(sub, "", interval.mark))
-        for interval in grid.tiers[tier]
+        (interval.xmin, interval.xmax, re.sub(sub, "", interval.text))
+        for interval in grid[tier]
     ]
     intv_tree = IntervalTree.from_tuples(intervals)
     return intv_tree
 
 
 def group_phones_by_tier(
-        grid: TextGrid, 
-        tree: IntervalTree, 
-        tier: int
-    ) -> List[Transcription]:
+    grid: textgrids.TextGrid, 
+    tree: IntervalTree, 
+    tier: int
+) -> List[Transcription]:
     """Group gold phone-level invervals by the onset and offsets of larger
     gold units specified by ``tier``.
     
     Parameters
     ----------
-    grid : TextGrid
+    grid : textgrids.
+        Gold TextGrid for an utterance.
     tree : IntervalTree
         Containing ``Interval[onset, offset, text]`` for each gold phone 
         interval in an utterance.
     tier : str
-        ``TextGrid`` tier to extract from.
+        ``textgrids.TextGrid`` tier to extract from.
 
     Returns
     -------
-    overlaps : List[Transcription]
-        Containing gold phone intervals ``Interval[onset, offset, text]`` 
-        grouped by the gold unit specified by ``tier``.
+    overlaps : list of Transcription
+        Gold phone intervals ``Interval[onset, offset, text]``, grouped by
+        the gold unit specified by ``tier``.
     """
 
     overlaps = [
-        tree.overlap(interval.minTime, interval.maxTime)
-        for interval in grid.tiers[tier]
-        if interval.mark != "<eps>"
+        tree.overlap(interval.xmin, interval.xmax)
+        for interval in grid[tier]
+        if interval.text != "<eps>"
     ]
     overlaps = [
         sorted(intervals, key=lambda x: x.begin)
         for intervals in overlaps
-        # if all(interval.data.lower() not in ["sil","spn","sp","","<unk>"] for interval in intervals)
     ]
     overlaps = [Transcription(intervals) for intervals in overlaps]
     return overlaps
 
 
 def get_inverse_transcription(
-        disc_info, 
-        grids, 
-        phone_trees, 
-        gt_unit_tier
-    ) -> dict:
-    """
+    disc_info: List[Tuple[Fragment, Transcription, int]], 
+    grids: Dict[str, textgrids.TextGrid], 
+    phone_trees: Dict[str, IntervalTree], 
+    gt_unit_tier: str
+) -> Dict[str, List[Tuple[str, List[int], List[Interval]]]]:
+    """Map each gold unit in ``grids`` to its overlapping discovered fragments'
+    cluster sequence in ``disc_info``.
+
     Parameters
     ----------
-    disc_info : List[Tuple[Fragment, Transcription, int]]
-        For each discovered fragment.
-    grids : List[TextGrid]
-        A ``TextGrid`` for each utterance.
-    phone_trees : dict
-        Containing and ``IntervalTree`` for each utterance.
+    disc_info : list of tuple of (Fragment, Transcription, int)
+        Discovered fragments, each given as its ``Fragment`` (speaker and
+        onset/offset), its ``Transcription``, and its cluster ID.
+    grids : dict of {str: textgrids.TextGrid}
+        A ``textgrids.TextGrid`` for each utterance, keyed by utterance ID.
+    phone_trees : dict of {str: IntervalTree}
+        An ``IntervalTree`` of phone intervals for each utterance, keyed by
+        utterance ID.
     gt_unit_tier : str
-        The ``TextGrid`` tier to use for the gold units.
+        The ``textgrids.TextGrid`` tier to use for the gold units.
 
     Returns
     -------
-    gt_unit_dict : dict
-        Containing gold phone intervals ``Interval[onset, offset, text]`` 
-        grouped by the gold unit specified by ``tier``.
+    gt_unit_dict : dict of {str: list of tuple}
+        Keyed by gold unit type. Each value is a list of tuples containing
+        the speaker, the list of overlapping cluster IDs, and the list of
+        corresponding discovered ``Interval`` objects.
     """
 
     gt_unit_dict = {}
@@ -274,3 +280,77 @@ def get_inverse_transcription(
                 )
 
     return gt_unit_dict
+
+
+def get_frame_num(seconds: np.ndarray, ms_per_frame: int) -> np.ndarray:
+    """Convert seconds to frame number: rounds to nearest integer.
+
+    Parameters
+    ----------
+    seconds : np.ndarray
+        The number of seconds to convert to frames.
+    ms_per_frame : int
+        The number of milliseconds per speech feature frame.
+
+    Returns
+    -------
+    output : np.ndarray
+        The frame number corresponding to the imput number of seconds.
+    """
+    
+    return np.floor(
+        np.round((seconds / ms_per_frame * 1000), 1) + 0.5
+    ).astype(np.int32)
+
+
+def split_utterance(
+    seg: List[float], 
+    ref: List[textgrids.Interval], 
+    tolerance: Union[int, float]
+) -> Tuple[List[List[Union[int, float]]], List[List[Union[int, float]]]]:
+    """Split segmentation and reference boundaries into per-utterance groups,
+    based on silences in the gold reference intervals.
+
+    Parameters
+    ----------
+    seg : list
+        The segmentation boundaries for the utterance.
+    ref : list
+        The gold ``textgrids.Interval`` for the utterance.
+    tolerance : numerical
+        The number of frames or seconds within which a ``seg`` boundary can hit 
+        a ``ref`` boundary. If ``int``, interpreted as number of frames; 
+        if ``float``, interpreted as number of seconds.
+    
+    Returns
+    -------
+    seg_out : list of list of float
+        Discovered boundaries grouped per utterance.
+    ref_out : list of list of float
+        Gold offsets grouped per utterance.
+
+    Notes
+    -----
+    Output format excludes the utterance onset boundary and includes
+    intermediate boundaries and the utterance offset boundary.
+    """
+    
+    ref_out = [
+        list(ref_utt)
+        for k, ref_utt in itertools.groupby(ref, lambda x: x.data != "")
+        if k
+    ]
+
+    seg_out = []
+    for ref_utt in ref_out:
+        if ref_utt[0].begin == 0.0: # If no silence at start of utterance
+            ref_utt_onset = ref_utt[0].begin - 1e-8
+        else:
+            ref_utt_onset = ref_utt[0].begin + tolerance
+        ref_utt_offset = ref_utt[-1].end - tolerance
+        seg_out.append(
+            [s for s in seg if ref_utt_onset < s < ref_utt_offset]
+        )
+        seg_out[-1].append(ref_utt[-1].end)
+        
+    return seg_out, [[float(interval.end) for interval in ref_utt] for ref_utt in ref_out]

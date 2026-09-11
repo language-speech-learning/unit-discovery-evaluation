@@ -59,24 +59,23 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    gt_unit_tier = 0
-    if args.class_type == "syllables":
-        if args.gold_format == ".txt":
-            print("Syllables classes cannot be used with ZeroSpeech alignments, " \
-            "reverting to word classes.")
-        else:
-            gt_unit_tier = 2
+    gt_unit_tier = args.class_type
+    if args.class_type == "syllables" and args.gold_format == ".txt":
+        print("Syllables classes cannot be used with ZeroSpeech alignments, " \
+        "reverting to word classes.")
+        gt_unit_tier = "words"
+
     # Keep stress factors for Mandarin, remove for other languages (same as ZRC)
     sub = "" if "mandarin" in str(args.gold_root).lower() else r"\d" 
 
     # Read gold and discovered files
     rdr = Reader(args.disc_root, args.gold_root, args.disc_format, args.gold_format)
     grids, gold_duration, num_gold_phones = rdr.gold_to_grids()
-    fragments = rdr.disc_to_intervals() # can get duration from here if we must rather do this?
+    fragments = rdr.disc_to_intervals()
 
     # Build gold interval structure
     phone_trees = {
-        speaker: treeify(grid, tier=1, sub=sub) 
+        speaker: treeify(grid, tier="phones", sub=sub) 
         for speaker, grid in grids.items()
     }
 
