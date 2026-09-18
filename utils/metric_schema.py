@@ -12,6 +12,15 @@ class p_r_f1:
 
 
 @dataclass
+class bounds:
+    precision: float
+    recall: float
+    f1: float
+    os: float
+    r_value: float
+
+
+@dataclass
 class fwd_inv_f1:
     forward: float
     inverse: float
@@ -36,15 +45,7 @@ class v_m:
 class mut_inf:
     mi: float
     nmi: float
-    gold_unit_nmi: float
-    cluster_nmi: float
-
-
-@dataclass
-class mut_inf:
-    mi: float
-    nmi: float
-    gold_unit_nmi: float
+    class_nmi: float
     cluster_nmi: float
 
 
@@ -68,26 +69,26 @@ class clust:
 
 @dataclass
 class EvaluationResults:
-    num_disc_units: int
-    classes: clss
-    clusters: clust
-    coverage: float
-    bitrate: float
-    original_nes: fwd_inv_f1
-    weighted_nes: fwd_inv_f1
-    pacc: fwd_inv_d
-    purity: fwd_inv_f1
-    v_measure: v_m
-    mutual_info: mut_inf
-    types: p_r_f1
-    boundaries: p_r_f1 | None = None
+    boundaries: bounds | None = None
+    token_boundaries: p_r_f1 | None = None
+    num_disc_units: int | None = None
+    classes: clss | None = None
+    clusters: clust | None = None
+    coverage: float | None = None
+    bitrate: float | None = None
+    original_nes: fwd_inv_f1 | None = None
+    weighted_nes: fwd_inv_f1 | None = None
+    pacc: fwd_inv_d | None = None
+    purity: fwd_inv_f1 | None = None
+    v_measure: v_m | None = None
+    mutual_info: mut_inf | None = None
+    types: p_r_f1 | None = None
 
 
 class MetricEncoder(json.JSONEncoder):
-    """Encodes NumPy types, Path objects, and sets into JSON-serializable primitives."""
     def default(self, obj):
         if isinstance(obj, (np.integer, np.floating)):
-            return obj.item()  # Converts np.int64 -> standard Python int / float
+            return obj.item()
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         if isinstance(obj, Path):
@@ -97,9 +98,29 @@ class MetricEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
-def save_json(name, out_name, results):
-    output_dict = {}
-    output_dict[name] = asdict(results)
+def merge_results(res, prev_res):
+    if prev_res is None:
+        return res
+
+    merged = dict(res)
+    for k, v in merged.items():
+        if v is None and prev_res.get(k) is not None:
+            merged[k] = prev_res[k]
+    return merged
+
+
+def save_json(name, out_name, results, prev_results):
+    if prev_results is None:
+        output_dict = {}
+    else:
+        with open(prev_results, 'r') as file:
+            output_dict = json.load(file)
+        Path(prev_results).unlink()
+
+    res = asdict(results)
+    prev_res = output_dict.get(name)
+    output_dict[name] = merge_results(res, prev_res)
+
     out_path = Path(out_name).with_suffix(".json")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
@@ -123,7 +144,7 @@ def print_result(label, value, percentage=True):
         print(f"{label:<{label_len}}:\t{value:,}")
 
 
-def print_results(name, results):
+def print_lex_results(name, results):
     print(f"\n~~~ Summarized evaluation results for {name} ~~~")
     print_result("Bitrate", results.bitrate, percentage=False)
     print_result("NES", results.original_nes.forward)

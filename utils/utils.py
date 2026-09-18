@@ -217,7 +217,7 @@ def get_inverse_transcription(
     Returns
     -------
     gt_unit_dict : dict of {str: list of tuple}
-        Keyed by gold unit type. Each value is a list of tuples containing
+        Keyed by gold unit class. Each value is a list of tuples containing
         the speaker, the list of overlapping cluster IDs, and the list of
         corresponding discovered ``Interval`` objects.
     """

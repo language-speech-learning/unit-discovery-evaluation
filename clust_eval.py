@@ -176,7 +176,7 @@ if __name__ == "__main__":
         inverse_per_val = 1-inverse_per_val
     f1_nes = f1_score(1-ned_val, 1-inverse_ned_val)
     f1_wnes = f1_score(1-weighted_ned_val, 1-inverse_weighted_ned_val)
-    d_pacc = eulc_dist(per_val, inverse_per_val)
+    d_pacc = eucl_dist(per_val, inverse_per_val)
 
     # Cluster sizes and distribution
     if args.class_type != "disc":
@@ -218,8 +218,13 @@ if __name__ == "__main__":
     )
 
     # Print some metrics
-    print_results(args.disc_root.stem, results)
+    print_lex_results(args.disc_root.stem, results)
 
     # Save all results to json
-    json_name = f"scores/lexicon_scores_{args.disc_root.stem}"
-    save_json(args.disc_root.stem, json_name, results)
+    if Path(f"scores/boundary_scores_{args.disc_root.stem}.json").exists():
+        bound_results = f"scores/boundary_scores_{args.disc_root.stem}.json"
+        json_name = f"scores/system_scores_{args.disc_root.stem}"
+    else:
+        bound_results = None
+        json_name = f"scores/lexicon_scores_{args.disc_root.stem}"
+    save_json(args.disc_root.stem, json_name, results, bound_results)

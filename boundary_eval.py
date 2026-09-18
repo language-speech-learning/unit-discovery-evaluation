@@ -11,6 +11,7 @@ import argparse
 from pathlib import Path
 
 from measures.boundaries import *
+from utils.metric_schema import *
 from utils.data_reader import Reader
 
 
@@ -113,3 +114,17 @@ if __name__ == "__main__":
     print(f"Precision: {precision}, Recall: {recall}, F1: {f1_score}")
     print(f"Over-segmentation: {os}, R-value: {rvalue}")
     print(f"Token Precision: {token_p}, Token Recall: {token_r}, Token F1: {token_f1}")
+
+    results = EvaluationResults(
+        boundaries=bounds(precision, recall, f1_score, os, rvalue),
+        token_boundaries=p_r_f1(token_p, token_r, token_f1)
+    )
+
+    # Save all results to json
+    if Path(f"scores/lexicon_scores_{args.disc_root.stem}.json").exists():
+        lex_results = f"scores/lexicon_scores_{args.disc_root.stem}.json"
+        json_name = f"scores/system_scores_{args.disc_root.stem}"
+    else:
+        lex_results = None
+        json_name = f"scores/boundary_scores_{args.disc_root.stem}"
+    save_json(args.disc_root.stem, json_name, results, lex_results)
