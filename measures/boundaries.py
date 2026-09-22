@@ -45,6 +45,7 @@ def get_p_r_f1(n_seg: int, n_ref: int, n_hit: int) -> Tuple[float, float, float]
     
     return precision, recall, f1_score
 
+
 def get_os(n_seg: int, n_ref: int) -> float:
     """Calculates over-segmentation: how many fewer/more boundaries are proposed 
     compared to the ground-truth.
@@ -66,6 +67,7 @@ def get_os(n_seg: int, n_ref: int) -> float:
         return -np.inf
     else:
         return n_seg/n_ref - 1
+
     
 def get_rvalue(os: float, recall: float) -> Tuple[float, float]:
     """Calculates the R-value: how close the segmentation is to an ideal point 
@@ -88,6 +90,7 @@ def get_rvalue(os: float, recall: float) -> Tuple[float, float]:
     r2 = (-os + recall - 1)/np.sqrt(2)
 
     return 1 - (np.abs(r1) + np.abs(r2))/2
+
 
 def eval_boundaries(
     seg: List[List[Union[int, float]]], 
@@ -152,6 +155,7 @@ def eval_boundaries(
                     if strict: break # makes the evaluation strict, so that a reference boundary can only be hit once
 
     return n_seg, n_ref, n_hit
+
 
 def eval_token_boundaries(
     seg: List[List[Union[int, float]]], 
