@@ -44,8 +44,8 @@ if __name__ == "__main__":
         type=str,
     )
     parser.add_argument(
-        "--alignment_type",
-        metavar="--alignment-type",
+        "--gold_type",
+        metavar="--gold-type",
         help="type of alignment tier to use.",
         default="words",
         choices=["words", "syllables", "phones"],
@@ -76,17 +76,24 @@ if __name__ == "__main__":
         default=True,
         type=bool,
     )
+    parser.add_argument(
+        "--system_name",
+        metavar="--system-name",
+        help="name of the discovered system used to save results.",
+        default=None,
+        type=str,
+    )
     args = parser.parse_args()
 
     frames = True if args.tolerance % 1 == 0 else False
-    if args.alignment_type == "syllables" and args.gold_format == ".txt":
+    if args.gold_type == "syllables" and args.gold_format == ".txt":
         print("Syllables classes cannot be used with ZeroSpeech alignments, " \
         "reverting to word classes.")
-        args.alignment_type = "words"
+        args.gold_type = "words"
 
     rdr = Reader(args.disc_root, args.gold_root, args.disc_format, args.gold_format)
     seg_list, ref_list = rdr.disc_gold_to_pairs(
-        args.alignment_type, 
+        args.gold_type, 
         args.ms_per_frame, 
         args.tolerance, 
         frames, 
@@ -121,10 +128,12 @@ if __name__ == "__main__":
     )
 
     # Save all results to json
-    if Path(f"scores/lexicon_scores_{args.disc_root.stem}.json").exists():
-        lex_results = f"scores/lexicon_scores_{args.disc_root.stem}.json"
-        json_name = f"scores/system_scores_{args.disc_root.stem}"
+    if args.system_name is None:
+        args.system_name = args.disc_root.stem
+    if Path(f"scores/lexicon_scores_{args.system_name}.json").exists():
+        lex_results = f"scores/lexicon_scores_{args.system_name}.json"
+        json_name = f"scores/system_scores_{args.system_name}"
     else:
         lex_results = None
-        json_name = f"scores/boundary_scores_{args.disc_root.stem}"
-    save_json(args.disc_root.stem, json_name, results, lex_results)
+        json_name = f"scores/boundary_scores_{args.system_name}"
+    save_json(args.system_name, json_name, results, lex_results)

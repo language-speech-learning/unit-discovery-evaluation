@@ -36,14 +36,6 @@ if __name__ == "__main__":
         type=Path,
     )
     parser.add_argument(
-        "--class_type",
-        metavar="--class-type",
-        help="what type to use as classes.",
-        choices=["words", "syllables", "disc"],
-        default="words",
-        type=str,
-    )
-    parser.add_argument(
         "--disc_format",
         metavar="--disc-format",
         help="extension of the discovered fragments.",
@@ -57,10 +49,25 @@ if __name__ == "__main__":
         default=".TextGrid",
         type=str,
     )
+    parser.add_argument(
+        "--gold_type",
+        metavar="--gold-type",
+        help="what type to use as classes.",
+        choices=["words", "syllables", "disc"],
+        default="words",
+        type=str,
+    )
+    parser.add_argument(
+        "--system_name",
+        metavar="--system-name",
+        help="name of the discovered system used to save results.",
+        default=None,
+        type=str,
+    )
     args = parser.parse_args()
 
-    gt_unit_tier = args.class_type
-    if args.class_type == "syllables" and args.gold_format == ".txt":
+    gt_unit_tier = args.gold_type
+    if args.gold_type == "syllables" and args.gold_format == ".txt":
         print("Syllables classes cannot be used with ZeroSpeech alignments, " \
         "reverting to word classes.")
         gt_unit_tier = "words"
@@ -95,7 +102,7 @@ if __name__ == "__main__":
     disc_info = sorted(disc_info, key=lambda x: (x[0].speaker, x[0].interval[0]))
     
     # For inverse metrics over gold types
-    if args.class_type != "disc":
+    if args.gold_type != "disc":
         gt_word_dict = get_inverse_transcription(
             disc_info, 
             grids, 
@@ -115,7 +122,7 @@ if __name__ == "__main__":
         disc_clusters.append(clus)
         disc_duration += frag.interval.end - frag.interval.begin
         # Map discovered fragments to class using max overlap rule
-        if args.class_type != "disc":
+        if args.gold_type != "disc":
             disc_tokens.append(
                 " ".join(
                         transcribe(
@@ -147,7 +154,7 @@ if __name__ == "__main__":
             )
 
     # General clustering metrics
-    calc_iper = False if args.class_type != "disc" else True
+    calc_iper = False if args.gold_type != "disc" else True
     purity_val, inverse_purity_val, inverse_per_val = purity(C, calc_iper)
     vmeasure_vals = metrics.homogeneity_completeness_v_measure(
         disc_tokens, disc_clusters
@@ -165,12 +172,12 @@ if __name__ == "__main__":
         # Use discovered duration for non full-coverage systems
         bitrate_val = bitrate(disc_clusters, len(disc_clusters), disc_duration)
     ned_val, _, weighted_ned_val = ned(disc_info)
-    if args.class_type != "disc":
+    if args.gold_type != "disc":
         inverse_ned_val, _, inverse_weighted_ned_val = inverse_ned(gt_word_dict)
     else:
         inverse_ned_val, inverse_weighted_ned_val = disc_type_ined(disc_info)
     per_val = per(disc_info)
-    if args.class_type != "disc":
+    if args.gold_type != "disc":
         inverse_per_val = inverse_per(gt_word_dict)
     else:
         inverse_per_val = 1-inverse_per_val
@@ -179,7 +186,7 @@ if __name__ == "__main__":
     d_pacc = eucl_dist(per_val, inverse_per_val)
 
     # Cluster sizes and distribution
-    if args.class_type != "disc":
+    if args.gold_type != "disc":
         num_classes = len(gt_word_dict)
         num_single_classes = sum(
             1 for v in gt_word_dict.values() 
@@ -204,7 +211,7 @@ if __name__ == "__main__":
 
     results = EvaluationResults(
         num_disc_units=len(disc_info),
-        classes=clss(args.class_type, num_classes, num_single_classes),
+        classes=clss(args.gold_type, num_classes, num_single_classes),
         clusters=clust(num_clust, clust_single, clust_mean, clust_std, clust_med, clust_max, clust_min),
         coverage=coverage_val,
         bitrate=bitrate_val,
@@ -221,10 +228,12 @@ if __name__ == "__main__":
     print_lex_results(args.disc_root.stem, results)
 
     # Save all results to json
-    if Path(f"scores/boundary_scores_{args.disc_root.stem}.json").exists():
-        bound_results = f"scores/boundary_scores_{args.disc_root.stem}.json"
-        json_name = f"scores/system_scores_{args.disc_root.stem}"
+    if args.system_name is None:
+        args.system_name = args.disc_root.stem
+    if Path(f"scores/boundary_scores_{args.system_name}.json").exists():
+        bound_results = f"scores/boundary_scores_{args.system_name}.json"
+        json_name = f"scores/system_scores_{args.system_name}"
     else:
         bound_results = None
-        json_name = f"scores/lexicon_scores_{args.disc_root.stem}"
-    save_json(args.disc_root.stem, json_name, results, bound_results)
+        json_name = f"scores/lexicon_scores_{args.system_name}"
+    save_json(args.system_name, json_name, results, bound_results)
