@@ -337,20 +337,20 @@ def split_utterance(
     
     ref_out = [
         list(ref_utt)
-        for k, ref_utt in itertools.groupby(ref, lambda x: x.data != "")
+        for k, ref_utt in itertools.groupby(ref, lambda x: x.text != "")
         if k
     ]
 
     seg_out = []
     for ref_utt in ref_out:
-        if ref_utt[0].begin == 0.0: # If no silence at start of utterance
-            ref_utt_onset = ref_utt[0].begin - 1e-8
+        if ref_utt[0].xmin == 0.0: # If no silence at start of utterance
+            ref_utt_onset = ref_utt[0].xmin - 1e-8
         else:
-            ref_utt_onset = ref_utt[0].begin + tolerance
-        ref_utt_offset = ref_utt[-1].end - tolerance
+            ref_utt_onset = ref_utt[0].xmin + tolerance
+        ref_utt_offset = ref_utt[-1].xmax - tolerance
         seg_out.append(
             [s for s in seg if ref_utt_onset < s < ref_utt_offset]
         )
-        seg_out[-1].append(ref_utt[-1].end)
+        seg_out[-1].append(ref_utt[-1].xmax)
         
-    return seg_out, [[float(interval.end) for interval in ref_utt] for ref_utt in ref_out]
+    return seg_out, [[float(interval.xmax) for interval in ref_utt] for ref_utt in ref_out]
